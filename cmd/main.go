@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/v2"
 	"github.com/knadh/listmonk/internal/bounce"
 	"github.com/knadh/listmonk/internal/buflog"
 	"github.com/knadh/listmonk/internal/captcha"
@@ -22,7 +22,6 @@ import (
 	"github.com/knadh/listmonk/internal/i18n"
 	"github.com/knadh/listmonk/internal/manager"
 	"github.com/knadh/listmonk/internal/media"
-	"github.com/knadh/listmonk/internal/messenger"
 	"github.com/knadh/listmonk/internal/subimporter"
 	"github.com/knadh/listmonk/models"
 	"github.com/knadh/paginator"
@@ -43,7 +42,7 @@ type App struct {
 	constants  *constants
 	manager    *manager.Manager
 	importer   *subimporter.Importer
-	messengers map[string]messenger.Messenger
+	messengers map[string]manager.Messenger
 	media      media.Store
 	i18n       *i18n.I18n
 	bounce     *bounce.Manager
@@ -167,7 +166,7 @@ func main() {
 		db:         db,
 		constants:  initConstants(),
 		media:      initMediaStore(),
-		messengers: make(map[string]messenger.Messenger),
+		messengers: make(map[string]manager.Messenger),
 		log:        lo,
 		bufLog:     bufLog,
 		captcha:    initCaptcha(),
@@ -184,18 +183,21 @@ func main() {
 
 	// Load i18n language map.
 	app.i18n = initI18n(app.constants.Lang, fs)
-
-	app.core = core.New(&core.Opt{
+	cOpt := &core.Opt{
 		Constants: core.Constants{
 			SendOptinConfirmation: app.constants.SendOptinConfirmation,
-			MaxBounceCount:        ko.MustInt("bounce.count"),
-			BounceAction:          ko.MustString("bounce.action"),
 		},
 		Queries: queries,
 		DB:      db,
 		I18n:    app.i18n,
 		Log:     lo,
-	}, &core.Hooks{
+	}
+
+	if err := ko.Unmarshal("bounce.actions", &cOpt.Constants.BounceActions); err != nil {
+		lo.Fatalf("error unmarshalling bounce config: %v", err)
+	}
+
+	app.core = core.New(cOpt, &core.Hooks{
 		SendOptinConfirmation: sendOptinConfirmationHook(app),
 	})
 

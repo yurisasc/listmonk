@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid"
-	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/json"
 	"github.com/knadh/koanf/providers/rawbytes"
-	"github.com/knadh/listmonk/internal/messenger"
+	"github.com/knadh/koanf/v2"
 	"github.com/knadh/listmonk/internal/messenger/email"
 	"github.com/knadh/listmonk/models"
 	"github.com/labstack/echo/v4"
@@ -163,6 +162,10 @@ func handleUpdateSettings(c echo.Context) error {
 		set.SecurityCaptchaSecret = cur.SecurityCaptchaSecret
 	}
 
+	for n, v := range set.UploadExtensions {
+		set.UploadExtensions[n] = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(v), "."))
+	}
+
 	// Domain blocklist.
 	doms := make([]string, 0)
 	for _, d := range set.DomainBlocklist {
@@ -250,7 +253,7 @@ func handleTestSMTPSettings(c echo.Context) error {
 		return err
 	}
 
-	m := messenger.Message{}
+	m := models.Message{}
 	m.ContentType = app.notifTpls.contentType
 	m.From = app.constants.FromEmail
 	m.To = []string{to}

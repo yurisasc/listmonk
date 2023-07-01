@@ -725,6 +725,8 @@ section.campaigns {
   }
 }
 
+.campaign 
+
 section.analytics {
   .charts {
     position: relative;
@@ -764,54 +766,20 @@ section.analytics {
 
 /* Media gallery */
 .media-files {
-  .thumbs {
-    display: flex;
-    flex-wrap: wrap;
-    flex-direction: column;
-    flex-flow: row wrap;
+  img {
+    max-width: 125px;
+  }
 
-    .thumb {
-      margin: 10px;
-      max-height: 90px;
-      overflow: hidden;
-
-      position: relative;
-
-      .caption {
-        background-color: rgba($white, .70);
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        padding: 2px 5px;
-
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .actions {
-        background-color: rgba($white, .70);
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        padding: 2px 5px;
-        display: none;
-
-        a {
-          margin-left: 10px;
-        }
-      }
-
-      &:hover .actions {
-        display: block;
-      }
-    }
-
-    .box {
-      padding: 10px;
-    }
+  .thumb.box {
+    display: inline-block;
+    padding: 5px;
+    min-width: 140px;
+    max-height: 140px;
+    overflow: hidden;
+    text-align: center;
+  }
+  .ext {
+    text-transform: uppercase;
   }
 }
 

@@ -12,16 +12,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
 	"github.com/knadh/goyesql/v2"
 	goyesqlx "github.com/knadh/goyesql/v2/sqlx"
-	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/maps"
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/posflag"
+	"github.com/knadh/koanf/v2"
 	"github.com/knadh/listmonk/internal/bounce"
 	"github.com/knadh/listmonk/internal/bounce/mailbox"
 	"github.com/knadh/listmonk/internal/captcha"
@@ -30,7 +31,6 @@ import (
 	"github.com/knadh/listmonk/internal/media"
 	"github.com/knadh/listmonk/internal/media/providers/filesystem"
 	"github.com/knadh/listmonk/internal/media/providers/s3"
-	"github.com/knadh/listmonk/internal/messenger"
 	"github.com/knadh/listmonk/internal/messenger/email"
 	"github.com/knadh/listmonk/internal/messenger/postback"
 	"github.com/knadh/listmonk/internal/subimporter"
@@ -50,25 +50,26 @@ const (
 
 // constants contains static, constant config values required by the app.
 type constants struct {
-	SiteName              string   `koanf:"site_name"`
-	RootURL               string   `koanf:"root_url"`
-	LogoURL               string   `koanf:"logo_url"`
-	FaviconURL            string   `koanf:"favicon_url"`
-	FromEmail             string   `koanf:"from_email"`
-	NotifyEmails          []string `koanf:"notify_emails"`
-	EnablePublicSubPage   bool     `koanf:"enable_public_subscription_page"`
-	EnablePublicArchive   bool     `koanf:"enable_public_archive"`
-	SendOptinConfirmation bool     `koanf:"send_optin_confirmation"`
-	Lang                  string   `koanf:"lang"`
-	DBBatchSize           int      `koanf:"batch_size"`
-	Privacy               struct {
+	SiteName                      string   `koanf:"site_name"`
+	RootURL                       string   `koanf:"root_url"`
+	LogoURL                       string   `koanf:"logo_url"`
+	FaviconURL                    string   `koanf:"favicon_url"`
+	FromEmail                     string   `koanf:"from_email"`
+	NotifyEmails                  []string `koanf:"notify_emails"`
+	EnablePublicSubPage           bool     `koanf:"enable_public_subscription_page"`
+	EnablePublicArchive           bool     `koanf:"enable_public_archive"`
+	EnablePublicArchiveRSSContent bool     `koanf:"enable_public_archive_rss_content"`
+	SendOptinConfirmation         bool     `koanf:"send_optin_confirmation"`
+	Lang                          string   `koanf:"lang"`
+	DBBatchSize                   int      `koanf:"batch_size"`
+	Privacy                       struct {
 		IndividualTracking bool            `koanf:"individual_tracking"`
 		AllowPreferences   bool            `koanf:"allow_preferences"`
 		AllowBlocklist     bool            `koanf:"allow_blocklist"`
 		AllowExport        bool            `koanf:"allow_export"`
 		AllowWipe          bool            `koanf:"allow_wipe"`
 		Exportable         map[string]bool `koanf:"-"`
-		DomainBlocklist    map[string]bool `koanf:"-"`
+		DomainBlocklist    []string        `koanf:"-"`
 	} `koanf:"privacy"`
 	Security struct {
 		EnableCaptcha bool   `koanf:"enable_captcha"`
@@ -85,13 +86,17 @@ type constants struct {
 		PublicJS  []byte `koanf:"public.custom_js"`
 	}
 
-	UnsubURL      string
-	LinkTrackURL  string
-	ViewTrackURL  string
-	OptinURL      string
-	MessageURL    string
-	ArchiveURL    string
-	MediaProvider string
+	UnsubURL     string
+	LinkTrackURL string
+	ViewTrackURL string
+	OptinURL     string
+	MessageURL   string
+	ArchiveURL   string
+
+	MediaUpload struct {
+		Provider   string
+		Extensions []string
+	}
 
 	BounceWebhooksEnabled bool
 	BounceSESEnabled      bool
@@ -367,8 +372,9 @@ func initConstants() *constants {
 	c.RootURL = strings.TrimRight(c.RootURL, "/")
 	c.Lang = ko.String("app.lang")
 	c.Privacy.Exportable = maps.StringSliceToLookupMap(ko.Strings("privacy.exportable"))
-	c.MediaProvider = ko.String("upload.provider")
-	c.Privacy.DomainBlocklist = maps.StringSliceToLookupMap(ko.Strings("privacy.domain_blocklist"))
+	c.MediaUpload.Provider = ko.String("upload.provider")
+	c.MediaUpload.Extensions = ko.Strings("upload.extensions")
+	c.Privacy.DomainBlocklist = ko.Strings("privacy.domain_blocklist")
 
 	// Static URLS.
 	// url.com/subscription/{campaign_uuid}/{subscriber_uuid}
@@ -447,7 +453,7 @@ func initCampaignManager(q *models.Queries, cs *constants, app *App) *manager.Ma
 		SlidingWindowRate:     ko.Int("app.message_sliding_window_rate"),
 		ScanInterval:          time.Second * 5,
 		ScanCampaigns:         !ko.Bool("passive"),
-	}, newManagerStore(q), campNotifCB, app.i18n, lo)
+	}, newManagerStore(q, app.core, app.media), campNotifCB, app.i18n, lo)
 }
 
 func initTxTemplates(m *manager.Manager, app *App) {
@@ -482,7 +488,7 @@ func initImporter(q *models.Queries, db *sqlx.DB, app *App) *subimporter.Importe
 }
 
 // initSMTPMessenger initializes the SMTP messenger.
-func initSMTPMessenger(m *manager.Manager) messenger.Messenger {
+func initSMTPMessenger(m *manager.Manager) manager.Messenger {
 	var (
 		mapKeys = ko.MapKeys("smtp")
 		servers = make([]email.Server, 0, len(mapKeys))
@@ -524,13 +530,13 @@ func initSMTPMessenger(m *manager.Manager) messenger.Messenger {
 
 // initPostbackMessengers initializes and returns all the enabled
 // HTTP postback messenger backends.
-func initPostbackMessengers(m *manager.Manager) []messenger.Messenger {
+func initPostbackMessengers(m *manager.Manager) []manager.Messenger {
 	items := ko.Slices("messengers")
 	if len(items) == 0 {
 		return nil
 	}
 
-	var out []messenger.Messenger
+	var out []manager.Messenger
 	for _, item := range items {
 		if !item.Bool("enabled") {
 			continue
@@ -602,12 +608,22 @@ func initNotifTemplates(path string, fs stuffbin.FileSystem, i *i18n.I18n, cs *c
 		"LogoURL": func() string {
 			return cs.LogoURL
 		},
+		"Date": func(layout string) string {
+			if layout == "" {
+				layout = time.ANSIC
+			}
+			return time.Now().Format(layout)
+		},
 		"L": func() *i18n.I18n {
 			return i
 		},
 		"Safe": func(safeHTML string) template.HTML {
 			return template.HTML(safeHTML)
 		},
+	}
+
+	for k, v := range sprig.GenericFuncMap() {
+		funcs[k] = v
 	}
 
 	tpls, err := stuffbin.ParseTemplatesGlob(funcs, fs, "/static/email-templates/*.html")
