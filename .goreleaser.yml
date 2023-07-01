@@ -10,19 +10,9 @@ builds:
   - binary: listmonk
     main: ./cmd
     goos:
-      - windows
-      - darwin
       - linux
-      - freebsd
-      - openbsd
-      - netbsd
     goarch:
-      - amd64
       - arm64
-      - arm
-    goarm:
-      - 6
-      - 7
     ldflags:
       - -s -w -X "main.buildString={{ .Tag }} ({{ .ShortCommit }} {{ .Date }}, {{ .Os }}/{{ .Arch }})" -X "main.versionString={{ .Tag }}"
 
